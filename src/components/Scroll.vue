@@ -1,96 +1,119 @@
 <template>
   <div class="scroll"
   ref="scrollRef"
-  @touchstart="handleTouchStart"
-  @touchmove="handleTouchMove"
-  @touchend="handleTouchEnd"
+  @touchstart.stop="handleTouchStart"
+  @touchmove.stop="throttleHandleTouchMove"
+  @touchend.stop="handleTouchEnd"
   >
     <div ref="scrollcontainerRef" class="scroll-container" :style="{transform:'translateY(' + y + 'px)','transition-duration': transitionTime +'ms'}" style="transition-timing-function: cubic-bezier(0.23, 1, 0.32, 1);">
-        <div class="list">
-            <div class="column">
-                <div class="item">1</div>
-                <div class="item big">2</div>
-                <div class="item big">3</div>
-                <div class="item">4</div>
-                <div class="item">5</div>
-                <div class="item big">6</div>
-                <div class="item big">7</div>
-                <div class="item">8</div>
-                <div class="item">9</div>
-                <div class="item big">10</div>
-                <div class="item big">11</div>
-                <div class="item">12</div>
-                <div class="item">13</div>
-                <div class="item big">14</div>
-                <div class="item big">15</div>
-                <div class="item"></div>
-            </div>
-            <div class="column">
-                <div class="item big"></div>
-                <div class="item big"></div>
-                <div class="item"></div>
-                <div class="item big"></div>
-                <div class="item"></div>
-                <div class="item big"></div>
-                <div class="item big"></div>
-                <div class="item"></div>
-                <div class="item big"></div>
-                <div class="item big"></div>
-                <div class="item"></div>
-                <div class="item big"></div>
-                <div class="item big"></div>
-                <div class="item big"></div>
-                <div class="item"></div>
-                <div class="item big"></div>
-            </div>
+        <slot></slot>
+        <div class="scroll-loading" v-if="loading">
+          <slot name="loading">
+            加载中
+          </slot>
+        </div>
+        <div class="scroll-finished" v-if="finished">
+          <slot name="finished">
+            没有更多了
+          </slot>
         </div>
     </div>
   </div>
 </template>
 
 <script lang="ts">
-import { defineComponent, ref, watch } from 'vue'
+import { computed, defineComponent, ref, toRefs, watch, watchEffect } from 'vue'
+import { throttle } from '../utils/utils'
 export default defineComponent({
   name: 'Scroll',
-  setup () {
+  props: {
+    offset: {
+      type: Number,
+      default: 300
+    },
+    finished: {
+      type: Boolean,
+      default: false
+    },
+    modelValue: {
+      type: Boolean,
+      default: false
+    }
+  },
+  emits: ['load', 'update:modelValue'],
+  setup (props, context) {
     const y = ref(0)
     const transitionTime = ref(0)
     let deltaY = 0
     let startY = 0
     let oldY = 0
-    let time = 0
     let ismoved = false
+    let time = 0
+    let speed = 0
+    let speedY = 0
 
+    const { finished, modelValue } = toRefs(props)
+    const loading = computed({
+      get: () => modelValue.value,
+      set: val => {
+        context.emit('update:modelValue', val)
+      }
+    })
     const isTouching = ref(false)
     const scrollcontainerRef = ref<HTMLElement | null>(null)
     const scrollRef = ref<HTMLElement | null>(null)
-
+    const isScrollable = () => {
+      const targetHeight = (scrollcontainerRef.value as HTMLElement).clientHeight
+      const scrollHeight = (scrollRef.value as HTMLElement).clientHeight
+      return targetHeight > scrollHeight
+    }
     const handleTouchStart = (e: TouchEvent) => {
+      if (!isScrollable()) {
+        return
+      }
       isTouching.value = true
       transitionTime.value = 0
       const touches = e.changedTouches
       const touch = touches[0]
-      time = new Date().getTime()
       startY = touch.pageY
       oldY = y.value
     }
+    const tap = (e:HTMLElement, eventName: string) => {
+      const ev = document.createEvent('HTMLEvents')
+      ev.initEvent(eventName, true, true)
+      e.dispatchEvent(ev)
+    }
 
     const handleTouchMove = (e: TouchEvent) => {
+      if (!isScrollable()) {
+        return
+      }
       const touches = e.changedTouches
       const touch = touches[0]
       deltaY = touch.pageY - startY
       y.value = oldY + deltaY
+      const oldspeedY = speedY
+      time = new Date().getTime()
+      speed = touch.pageY - oldspeedY
+      speedY = touch.pageY
       ismoved = true
     }
 
-    const handleTouchEnd = () => {
+    const throttleHandleTouchMove = throttle(handleTouchMove, 6)
+
+    const handleTouchEnd = (e: TouchEvent) => {
+      if (!isScrollable()) {
+        return
+      }
+      const touches = e.changedTouches
+      const touch = touches[0]
+      const clientHeight = document.documentElement.clientHeight
       time = new Date().getTime() - time
-      if (time < 100 && ismoved) {
-        const clientHeight = document.documentElement.clientHeight
-        const scrollStrength = deltaY / time
-        const endY = clientHeight * scrollStrength + y.value
+      if (Math.abs(speed) && ismoved && time < 20) {
+        const speedrat = speed / 6
+        const endY = clientHeight * speedrat + y.value
         y.value = endY
-        transitionTime.value = Math.min(2400, 800 * Math.abs(scrollStrength))
+        transitionTime.value = Math.min(2400, 800 * Math.abs(speedrat))
       }
       isTouching.value = false
       ismoved = false
@@ -109,6 +132,24 @@ export default defineComponent({
         transitionTime.value = 800
       }
     })
+
+    watch(y, () => {
+      const target = scrollRef.value as HTMLElement
+      tap(target, 'scroll')
+    })
+
+    watchEffect(() => {
+      const target = scrollcontainerRef.value as HTMLElement
+      const targetHeight = target.clientHeight
+      const scrollHeight = (scrollRef.value as HTMLElement).clientHeight
+      const offsetBottom = targetHeight - (Math.abs(y.value) + scrollHeight)
+      if (offsetBottom < props.offset && !finished.value && !modelValue.value) {
+        context.emit('load')
+      }
+    },
+    {
+      flush: 'post'
+    })
     // scroll组件的scrollto方法实现
     const scrollTo = (el: HTMLElement | number) => {
       let offsetTop
@@ -122,13 +163,14 @@ export default defineComponent({
     }
     return {
       handleTouchStart,
-      handleTouchMove,
+      throttleHandleTouchMove,
       handleTouchEnd,
       y,
       transitionTime,
       scrollcontainerRef,
       scrollRef,
-      scrollTo
+      scrollTo,
+      loading
     }
   }
 })
@@ -136,31 +178,17 @@ export default defineComponent({
 <style lang="less" scoped>
 .scroll{
     overflow: hidden;
-    height: 80vh;
-}
-.list{
-    width: 100%;
-    display: flex;
-    flex-wrap: nowrap;
-    box-sizing: border-box;
-    .column{
-        width: 50%;
+    .scroll-container{
+      .scroll-loading{
         display: flex;
-        flex-direction: column;
-        flex-wrap: nowrap;
-        box-sizing: border-box;
-        padding: 0 5px;
-    }
-    .item{
-        width: 100%;
-        height: 200px;
-        background-color: pink;
-        box-sizing: border-box;
-        margin-bottom: 5px;
-        border-radius: 2px;
-    }
-    .big{
-        height: 300px;
+        justify-content: center;
+        align-items: center;
+      }
+      .scroll-finished{
+        display: flex;
+        justify-content: center;
+        align-items: center;
+      }
     }
 }
 </style>
