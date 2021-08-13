@@ -22,8 +22,9 @@
 </template>
 
 <script lang="ts">
-import { computed, defineComponent, ref, toRefs, watch, watchEffect } from 'vue'
+import { computed, defineComponent, onMounted, ref, toRefs, watch, watchEffect } from 'vue'
 import { throttle } from '../utils/utils'
+import testData from './testData.json'
 export default defineComponent({
   name: 'Scroll',
   props: {
@@ -52,11 +53,21 @@ export default defineComponent({
     let speed = 0
     let speedY = 0
 
+    onMounted(() => {
+      console.log({ testData })
+    })
     const { finished, modelValue } = toRefs(props)
     const loading = computed({
       get: () => modelValue.value,
       set: val => {
         context.emit('update:modelValue', val)
+      }
+    })
+    const isOverflow = computed(() => {
+      if (y.value >= 0) {
+        return true
+      } else {
+        return false
       }
     })
     const isTouching = ref(false)
@@ -90,8 +101,13 @@ export default defineComponent({
       }
       const touches = e.changedTouches
       const touch = touches[0]
-      deltaY = touch.pageY - startY
-      y.value = oldY + deltaY
+      if (isOverflow.value) {
+        deltaY = (touch.pageY - startY) / 5
+        y.value = deltaY
+      } else {
+        deltaY = touch.pageY - startY
+        y.value = oldY + deltaY
+      }
       const oldspeedY = speedY
       time = new Date().getTime()
       speed = touch.pageY - oldspeedY
@@ -109,11 +125,12 @@ export default defineComponent({
       const touch = touches[0]
       const clientHeight = document.documentElement.clientHeight
       time = new Date().getTime() - time
-      if (Math.abs(speed) && ismoved && time < 20) {
+      if (Math.abs(speed) && ismoved && time < 12) {
         const speedrat = speed / 6
         const endY = clientHeight * speedrat + y.value
         y.value = endY
-        transitionTime.value = Math.min(2400, 800 * Math.abs(speedrat))
+        // transitionTime.value = Math.min(2400, 800 * Math.abs(speedrat))
+        transitionTime.value = 2500
       }
       isTouching.value = false
       ismoved = false
@@ -124,16 +141,16 @@ export default defineComponent({
       const target = scrollcontainerRef.value as HTMLElement
       const targetHeight = target.clientHeight
       const scrollHeight = (scrollRef.value as HTMLElement).clientHeight
-      if (y.value > 100 && !newVal) {
+      if (y.value > 0 && !newVal) {
         y.value = 0
         transitionTime.value = 800
-      } else if (y.value < -(targetHeight - scrollHeight + 100) && !newVal) {
+      } else if (y.value < -(targetHeight - scrollHeight) && !newVal) {
         y.value = -(targetHeight - scrollHeight)
         transitionTime.value = 800
       }
     })
 
-    watch(y, () => {
+    watch(y, (newy) => {
       const target = scrollRef.value as HTMLElement
       tap(target, 'scroll')
     })
@@ -151,7 +168,7 @@ export default defineComponent({
       flush: 'post'
     })
     // scroll组件的scrollto方法实现
-    const scrollTo = (el: HTMLElement | number) => {
+    const scrollTo = (el: HTMLElement | number, duration: number) => {
       let offsetTop
       if (el instanceof HTMLElement) {
         offsetTop = el.offsetTop
@@ -159,7 +176,7 @@ export default defineComponent({
         offsetTop = el
       }
       y.value = -offsetTop
-      transitionTime.value = 800
+      transitionTime.value = duration
     }
     return {
       handleTouchStart,
